@@ -1,18 +1,16 @@
 """
 app/admin/views.py
 
-Админка с загрузкой файлов через встроенные поля starlette-admin.
+Админка с загрузкой файлов через отдельный эндпоинт.
 """
-import os
 import uuid
 import logging
 from pathlib import Path
+from typing import Any, Dict
 
-from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette_admin.contrib.sqla import ModelView
-from starlette_admin.fields import FileField, StringField, IntegerField, FloatField, BooleanField, RelationField
-from wtforms.validators import Optional
+from starlette_admin.fields import StringField, IntegerField, FloatField, BooleanField
 
 from app.core.config import settings
 from app.models.user import User
@@ -29,52 +27,9 @@ from app.models.constructor import CanvasTemplate, ConstructorOrder
 logger = logging.getLogger(__name__)
 
 
-async def save_uploaded_file(file) -> str | None:
-    """
-    Сохраняет загруженный файл и возвращает URL.
-
-    Args:
-        file: Загруженный файл (UploadFile)
-
-    Returns:
-        str: URL файла или None если файл не загружен
-    """
-    if not file or not hasattr(file, 'filename') or not file.filename:
-        return None
-
-    try:
-        # Получаем расширение файла
-        if '.' in file.filename:
-            ext = file.filename.rsplit('.', 1)[-1].lower()
-        else:
-            ext = 'jpg'
-
-        # Генерируем уникальное имя файла
-        filename = f"{uuid.uuid4().hex}.{ext}"
-
-        # Создаем директорию для загрузок если её нет
-        upload_dir = Path(settings.UPLOAD_DIR)
-        upload_dir.mkdir(parents=True, exist_ok=True)
-
-        # Сохраняем файл
-        file_path = upload_dir / filename
-        content = await file.read()
-        file_path.write_bytes(content)
-
-        # Возвращаем URL для доступа к файлу
-        return f"/uploads/{filename}"
-
-    except Exception as e:
-        logger.error(f"Ошибка загрузки файла: {e}")
-        return None
-
-
 class BaseModelView(ModelView):
     """Базовый класс для всех представлений админки."""
-
-    async def after_model_change(self, request: Request, obj, is_created: bool) -> None:
-        """Переопределите в дочерних классах для обработки специфических полей."""
-        pass
+    pass
 
 
 class UserAdmin(BaseModelView):
@@ -111,28 +66,8 @@ class ColorAdmin(BaseModelView):
     fields = [
         StringField('name'),
         StringField('hex_code'),
-        FileField('palette_image_url'),
+        StringField('palette_image_url'),  # было FileField
     ]
-
-    async def after_model_change(self, request: Request, obj: Color, is_created: bool) -> None:
-        """Обрабатывает загрузку изображения палитры."""
-        try:
-            data = await request.form()
-
-            # Получаем файл из формы
-            file_field = data.get('palette_image_url')
-
-            # Проверяем, что это файл и он был загружен
-            if file_field and hasattr(file_field, 'filename') and file_field.filename:
-                url = await save_uploaded_file(file_field)
-                if url:
-                    obj.palette_image_url = url
-                    session: Session = request.state.session
-                    session.add(obj)
-                    await session.commit()
-                    logger.info(f"Файл сохранен: {url}")
-        except Exception as e:
-            logger.error(f"Ошибка в after_model_change для Color: {e}")
 
 
 class ProductTypeAdmin(BaseModelView):
@@ -151,43 +86,12 @@ class ProductTypeAdmin(BaseModelView):
         StringField('slug'),
         FloatField('base_price'),
         BooleanField('is_active'),
-        FileField('image_url'),
-        FileField('size_chart_url'),
+        StringField('image_url'),          # было FileField
+        StringField('size_chart_url'),     # было FileField
         StringField('description'),
         StringField('composition'),
         StringField('notes'),
     ]
-
-    async def after_model_change(self, request: Request, obj: ProductType, is_created: bool) -> None:
-        """Обрабатывает загрузку изображений для продукта."""
-        try:
-            data = await request.form()
-            session: Session = request.state.session
-            updated = False
-
-            # Обрабатываем основное изображение
-            image_file = data.get('image_url')
-            if image_file and hasattr(image_file, 'filename') and image_file.filename:
-                url = await save_uploaded_file(image_file)
-                if url:
-                    obj.image_url = url
-                    updated = True
-                    logger.info(f"Изображение продукта сохранено: {url}")
-
-            # Обрабатываем таблицу размеров
-            size_chart_file = data.get('size_chart_url')
-            if size_chart_file and hasattr(size_chart_file, 'filename') and size_chart_file.filename:
-                url = await save_uploaded_file(size_chart_file)
-                if url:
-                    obj.size_chart_url = url
-                    updated = True
-                    logger.info(f"Таблица размеров сохранена: {url}")
-
-            if updated:
-                session.add(obj)
-                await session.commit()
-        except Exception as e:
-            logger.error(f"Ошибка в after_model_change для ProductType: {e}")
 
 
 class ProductTypeSizeAdmin(BaseModelView):
@@ -233,25 +137,8 @@ class PrintAdmin(BaseModelView):
     fields = [
         StringField('name'),
         BooleanField('is_active'),
-        FileField('image_url'),
+        StringField('image_url'),  # было FileField
     ]
-
-    async def after_model_change(self, request: Request, obj: Print, is_created: bool) -> None:
-        """Обрабатывает загрузку изображения принта."""
-        try:
-            data = await request.form()
-
-            file_field = data.get('image_url')
-            if file_field and hasattr(file_field, 'filename') and file_field.filename:
-                url = await save_uploaded_file(file_field)
-                if url:
-                    obj.image_url = url
-                    session: Session = request.state.session
-                    session.add(obj)
-                    await session.commit()
-                    logger.info(f"Изображение принта сохранено: {url}")
-        except Exception as e:
-            logger.error(f"Ошибка в after_model_change для Print: {e}")
 
 
 class PrintSizeAdmin(BaseModelView):
@@ -289,25 +176,8 @@ class ReadyProductAdmin(BaseModelView):
         FloatField('price'),
         IntegerField('stock_quantity'),
         BooleanField('is_active'),
-        FileField('image_url'),
+        StringField('image_url'),  # было FileField
     ]
-
-    async def after_model_change(self, request: Request, obj: ReadyProduct, is_created: bool) -> None:
-        """Обрабатывает загрузку изображения готового продукта."""
-        try:
-            data = await request.form()
-
-            file_field = data.get('image_url')
-            if file_field and hasattr(file_field, 'filename') and file_field.filename:
-                url = await save_uploaded_file(file_field)
-                if url:
-                    obj.image_url = url
-                    session: Session = request.state.session
-                    session.add(obj)
-                    await session.commit()
-                    logger.info(f"Изображение готового продукта сохранено: {url}")
-        except Exception as e:
-            logger.error(f"Ошибка в after_model_change для ReadyProduct: {e}")
 
 
 class CartItemAdmin(BaseModelView):
@@ -442,26 +312,9 @@ class CanvasTemplateAdmin(BaseModelView):
         IntegerField('product_type_id'),
         IntegerField('color_id'),
         BooleanField('is_active'),
-        FileField('canvas_image_url'),
+        StringField('canvas_image_url'),  # было FileField
         StringField('template_data'),
     ]
-
-    async def after_model_change(self, request: Request, obj: CanvasTemplate, is_created: bool) -> None:
-        """Обрабатывает загрузку изображения шаблона."""
-        try:
-            data = await request.form()
-
-            file_field = data.get('canvas_image_url')
-            if file_field and hasattr(file_field, 'filename') and file_field.filename:
-                url = await save_uploaded_file(file_field)
-                if url:
-                    obj.canvas_image_url = url
-                    session: Session = request.state.session
-                    session.add(obj)
-                    await session.commit()
-                    logger.info(f"Изображение шаблона сохранено: {url}")
-        except Exception as e:
-            logger.error(f"Ошибка в after_model_change для CanvasTemplate: {e}")
 
 
 class ConstructorOrderAdmin(BaseModelView):
@@ -472,7 +325,6 @@ class ConstructorOrderAdmin(BaseModelView):
         ConstructorOrder.status, ConstructorOrder.final_price,
         ConstructorOrder.created_at,
     ]
-
     fields = [
         IntegerField('user_id'),
         StringField('status'),

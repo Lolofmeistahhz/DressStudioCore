@@ -1,5 +1,10 @@
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
     alert_chat_id: int
@@ -20,10 +25,15 @@ class Settings(BaseSettings):
     YOOKASSA_SHOP_ID: str = ""
     YOOKASSA_SECRET_KEY: str = ""
 
-    UPLOAD_DIR: str = "uploads"
+    UPLOAD_DIR: str = str(BASE_DIR / "media")
 
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin"
+
+    BASE_URL: str = os.getenv("BASE_URL")
+
+    ADMIN_BASE_URL: str = f"{BASE_URL}/admin"
+
 
     @property
     def database_url(self) -> str:

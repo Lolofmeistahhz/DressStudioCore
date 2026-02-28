@@ -1,9 +1,12 @@
 import logging
+import os
 from contextlib import asynccontextmanager
+
+from app.utils.shared import save_uploaded_file
 
 logging.basicConfig(level=logging.INFO)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -23,10 +26,9 @@ from app.admin.views import (
     UserAdmin, ColorAdmin, ProductTypeAdmin, ProductTypeSizeAdmin,
     ProductTypeColorAdmin, PrintAdmin, PrintSizeAdmin, ReadyProductAdmin,
     CartItemAdmin, ReadyOrderAdmin, CustomOrderAdmin,
-    PaymentAdmin, CanvasTemplateAdmin, ConstructorOrderAdmin,
+    PaymentAdmin, CanvasTemplateAdmin, ConstructorOrderAdmin
 )
 
-# Новые модели
 from app.models.user import User
 from app.models.catalog import (
     Color, ProductType, ProductTypeSize, ProductTypeColor,
@@ -49,6 +51,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 # ── Админка ────────────────────────────────────────────────────────────────────
 
 admin = Admin(
@@ -57,7 +60,31 @@ admin = Admin(
     auth_provider=UsernameAndPasswordProvider(),
     middlewares=[Middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)],
     templates_dir="templates/admin",
+    base_url=settings.ADMIN_BASE_URL,  # важно для корректных ссылок по HTTPS
 )
+
+
+# ── Эндпоинт для загрузки файлов ──────────────────────────────────────────────
+
+@app.post("/api/v1/upload", tags=["Upload"])
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Загружает файл на сервер и возвращает ссылку на него.
+    Используется для загрузки изображений в админке.
+    """
+
+    if not file:
+        raise HTTPException(status_code=400, detail="Файл не передан")
+
+    file_url = await save_uploaded_file(file)
+
+    if not file_url:
+        raise HTTPException(status_code=500, detail="Не удалось сохранить файл")
+
+    return {
+        "success": True,
+        "url": file_url
+    }
 
 admin.add_view(UserAdmin(User, label="Клиенты", icon="fa fa-users"))
 admin.add_view(ColorAdmin(Color, label="Цвета", icon="fa fa-palette"))
@@ -74,7 +101,6 @@ admin.add_view(PaymentAdmin(Payment, label="Платежи", icon="fa fa-credit-
 admin.add_view(CanvasTemplateAdmin(CanvasTemplate, label="Канвасы (конструктор)", icon="fa fa-vector-square"))
 admin.add_view(ConstructorOrderAdmin(ConstructorOrder, label="Заказы конструктора", icon="fa fa-wand-magic-sparkles"))
 
-admin.mount_to(app)
 
 # ── API роутеры ────────────────────────────────────────────────────────────────
 
@@ -87,13 +113,13 @@ app.include_router(ready_orders_router, prefix=PREFIX)
 app.include_router(custom_orders_router, prefix=PREFIX)
 app.include_router(payments_router, prefix=PREFIX)
 
-# Статика для загруженных медиафайлов
-import os
-
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount("/media", StaticFiles(directory=settings.UPLOAD_DIR), name="media")
 
+admin.mount_to(app)
 
 @app.get("/")
 async def root():
     return {"message": "Embroidery Studio API v1 🧵"}
+
+
