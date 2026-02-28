@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  fastapi-app:
+    build: .
+    container_name: dress-studio-core
+    restart: unless-stopped
+    ports:
+      - "8666:8666"
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - TZ=Europe/Moscow
+      - DATABASE_URL=postgresql://postgres:pg_pass_studio@postgres-fastapi:5432/lembro_db
+    env_file:
+      - .env
+    networks:
+      - shared-network
+    depends_on:
+      - postgres-db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8666 --reload
+
+networks:
+  shared-network:
+    external: true
+    name: dress-studio-network
