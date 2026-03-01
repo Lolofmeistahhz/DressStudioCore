@@ -77,3 +77,4 @@ class ConstructorOrder(Base):
     created_at:         Mapped[datetime]   = mapped_column(DateTime, server_default=func.now())
 
     canvas_template: Mapped["CanvasTemplate"] = relationship(back_populates="orders")
+    user: Mapped["User"] = relationship(back_populates="constructor_orders")

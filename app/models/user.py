@@ -44,6 +44,7 @@ class User(Base):
     cart_items:    Mapped[list["CartItem"]]    = relationship(back_populates="user", cascade="all, delete-orphan")
     ready_orders:  Mapped[list["ReadyOrder"]]  = relationship(back_populates="user")
     custom_orders: Mapped[list["CustomOrder"]] = relationship(back_populates="user")
+    constructor_orders: Mapped[list["ConstructorOrder"]] = relationship(back_populates="user")
 
     @property
     def delivery_complete(self) -> bool:

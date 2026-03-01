@@ -25,7 +25,7 @@ from app.admin.auth import UsernameAndPasswordProvider
 from app.admin.views import (
     UserAdmin, ColorAdmin, ProductTypeAdmin, ProductTypeSizeAdmin,
     ProductTypeColorAdmin, PrintAdmin, PrintSizeAdmin, ReadyProductAdmin,
-    CartItemAdmin, ReadyOrderAdmin, CustomOrderAdmin,
+    CartItemAdmin, ReadyOrderAdmin, ReadyOrderItemAdmin, CustomOrderAdmin,
     PaymentAdmin, CanvasTemplateAdmin, ConstructorOrderAdmin
 )
 
@@ -54,13 +54,16 @@ app = FastAPI(
 
 # ── Админка ────────────────────────────────────────────────────────────────────
 
+# ВАЖНО: Указываем кастомный base_url для админки, чтобы избежать конфликта с API
+ADMIN_PREFIX = "/control"  # Не /admin и не /api, чтобы избежать конфликтов
+
 admin = Admin(
     sync_engine,
     title="Студия вышивки · Панель управления",
     auth_provider=UsernameAndPasswordProvider(),
     middlewares=[Middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)],
     templates_dir="templates/admin",
-    base_url=settings.ADMIN_BASE_URL,  # важно для корректных ссылок по HTTPS
+    base_url=ADMIN_PREFIX,  # Используем кастомный префикс
 )
 
 
@@ -86,6 +89,9 @@ async def upload_file(file: UploadFile = File(...)):
         "url": file_url
     }
 
+
+# ── Регистрация представлений админки ─────────────────────────────────────────
+
 admin.add_view(UserAdmin(User, label="Клиенты", icon="fa fa-users"))
 admin.add_view(ColorAdmin(Color, label="Цвета", icon="fa fa-palette"))
 admin.add_view(ProductTypeAdmin(ProductType, label="Типы изделий", icon="fa fa-shirt"))
@@ -96,6 +102,7 @@ admin.add_view(PrintSizeAdmin(PrintSize, label="Размеры вышивки", 
 admin.add_view(ReadyProductAdmin(ReadyProduct, label="Готовый мерч", icon="fa fa-box"))
 admin.add_view(CartItemAdmin(CartItem, label="Корзины", icon="fa fa-cart-shopping"))
 admin.add_view(ReadyOrderAdmin(ReadyOrder, label="Заказы мерча", icon="fa fa-bag-shopping"))
+admin.add_view(ReadyOrderItemAdmin(ReadyOrderItem, label="Элементы заказов", icon="fa fa-receipt"))
 admin.add_view(CustomOrderAdmin(CustomOrder, label="Кастомные заказы", icon="fa fa-pen-nib"))
 admin.add_view(PaymentAdmin(Payment, label="Платежи", icon="fa fa-credit-card"))
 admin.add_view(CanvasTemplateAdmin(CanvasTemplate, label="Канвасы (конструктор)", icon="fa fa-vector-square"))
@@ -113,13 +120,13 @@ app.include_router(ready_orders_router, prefix=PREFIX)
 app.include_router(custom_orders_router, prefix=PREFIX)
 app.include_router(payments_router, prefix=PREFIX)
 
+# Создаем директорию для загрузок
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount("/media", StaticFiles(directory=settings.UPLOAD_DIR), name="media")
 
+# ВАЖНО: Монтируем админку ПОСЛЕ всех API роутеров
 admin.mount_to(app)
 
 @app.get("/")
 async def root():
     return {"message": "Embroidery Studio API v1 🧵"}
-
-
