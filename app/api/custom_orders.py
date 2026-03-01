@@ -1,122 +1,114 @@
-from decimal import Decimal
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+"""
+app/api/custom_orders.py
+
+Фикс: custom_images теперь явно сохраняется в модель.
+"""
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from pydantic import BaseModel
+from typing import Optional
+from decimal import Decimal
 
 from app.core.database import get_db
-from app.models.order import CustomOrder
-from app.models.catalog import ProductType, Color, Print, PrintSize
+from app.models.order import CustomOrder, CustomOrderStatus
+from app.models.catalog import PrintSize
 from app.models.user import User
-from app.schemas.order import CustomOrderCreate, CustomOrderOut
 
-router = APIRouter(prefix="/custom-orders", tags=["Кастомные заказы"])
+router = APIRouter(prefix="/custom-orders", tags=["custom-orders"])
 
 
-async def _get_user(telegram_id: int, db: AsyncSession) -> User:
+class CustomOrderCreate(BaseModel):
+    product_type_id: int
+    color_id: int
+    size_label: str
+    print_id:      Optional[int]       = None
+    print_size_id: Optional[int]       = None
+    custom_images: Optional[list[str]] = None   # список URL загруженных фото
+    comment:       Optional[str]       = None
+
+
+@router.post("/")
+async def create_custom_order(
+    body: CustomOrderCreate,
+    telegram_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    # Получаем пользователя
     result = await db.execute(select(User).where(User.telegram_id == telegram_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    return user
-
-
-def _calc_recommended_price(product_type: ProductType, print_size: Optional[PrintSize]) -> Decimal:
-    price = product_type.base_price
-    if print_size:
-        price += print_size.price
-    return price
-
-
-@router.post("/", response_model=CustomOrderOut, summary="Создать кастомный заказ")
-async def create_custom_order(
-    telegram_id: int,
-    data: CustomOrderCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    user = await _get_user(telegram_id, db)
-
+        raise HTTPException(404, "User not found")
     if not user.delivery_complete:
-        raise HTTPException(
-            status_code=400,
-            detail="Заполните данные доставки в профиле перед созданием заказа.",
-        )
+        raise HTTPException(400, "Delivery info incomplete")
 
-    pt_result = await db.execute(
-        select(ProductType).where(ProductType.id == data.product_type_id, ProductType.is_active == True)
-    )
-    product_type = pt_result.scalar_one_or_none()
-    if not product_type:
-        raise HTTPException(status_code=404, detail="Тип изделия не найден")
-
-    color_result = await db.execute(select(Color).where(Color.id == data.color_id))
-    if not color_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Цвет не найден")
-
-    print_size: Optional[PrintSize] = None
-    if data.print_id:
-        print_result = await db.execute(
-            select(Print).where(Print.id == data.print_id, Print.is_active == True)
-        )
-        if not print_result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Принт не найден")
-
-        ps_result = await db.execute(
-            select(PrintSize).where(
-                PrintSize.id == data.print_size_id,
-                PrintSize.print_id == data.print_id,
-            )
-        )
-        print_size = ps_result.scalar_one_or_none()
-        if not print_size:
-            raise HTTPException(status_code=404, detail="Размер вышивки не найден")
-
-    recommended_price = _calc_recommended_price(product_type, print_size)
+    # Рассчитываем рекомендованную цену
+    recommended_price: Decimal | None = None
+    if body.print_size_id:
+        ps_result = await db.execute(select(PrintSize).where(PrintSize.id == body.print_size_id))
+        ps = ps_result.scalar_one_or_none()
+        if ps:
+            recommended_price = ps.price
 
     order = CustomOrder(
-        user_id=user.id,
-        product_type_id=data.product_type_id,
-        color_id=data.color_id,
-        size_label=data.size_label,
-        print_id=data.print_id,
-        print_size_id=data.print_size_id,
-        custom_images=data.custom_images,
-        comment=data.comment,
-        recommended_price=recommended_price,
-        final_price=recommended_price,
-        carrier=user.delivery_carrier,
-        delivery_name=user.delivery_name,
-        delivery_phone=user.phone,          # единственный телефон
-        delivery_city=user.delivery_city,
-        delivery_address=user.delivery_address,
+        user_id         = user.id,
+        product_type_id = body.product_type_id,
+        color_id        = body.color_id,
+        size_label      = body.size_label,
+        print_id        = body.print_id,
+        print_size_id   = body.print_size_id,
+        custom_images   = body.custom_images,  # ← явно сохраняем список URL
+        comment         = body.comment,
+        recommended_price = recommended_price,
+        # Снапшот доставки
+        carrier          = user.delivery_carrier,
+        delivery_name    = user.delivery_name,
+        delivery_phone   = user.phone,
+        delivery_city    = user.delivery_city,
+        delivery_address = user.delivery_address,
+        status           = CustomOrderStatus.new,
     )
     db.add(order)
     await db.commit()
     await db.refresh(order)
-    return order
+
+    return {
+        "id": order.id,
+        "status": order.status,
+        "recommended_price": str(order.recommended_price) if order.recommended_price else None,
+        "custom_images": order.custom_images,   # возвращаем обратно для подтверждения
+    }
 
 
-@router.get("/my", response_model=list[CustomOrderOut], summary="Мои кастомные заказы")
-async def get_my_custom_orders(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    user = await _get_user(telegram_id, db)
-    result = await db.execute(
+@router.get("/my")
+async def my_custom_orders(telegram_id: int = Query(...), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.telegram_id == telegram_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    orders_result = await db.execute(
         select(CustomOrder)
         .where(CustomOrder.user_id == user.id)
         .order_by(CustomOrder.created_at.desc())
-    )
-    return result.scalars().all()
-
-
-@router.get("/{order_id}", response_model=CustomOrderOut, summary="Детали заказа")
-async def get_custom_order(order_id: int, telegram_id: int, db: AsyncSession = Depends(get_db)):
-    user = await _get_user(telegram_id, db)
-    result = await db.execute(
-        select(CustomOrder).where(
-            CustomOrder.id == order_id,
-            CustomOrder.user_id == user.id,
+        .options(
+            selectinload(CustomOrder.product_type),
+            selectinload(CustomOrder.color),
         )
     )
-    order = result.scalar_one_or_none()
-    if not order:
-        raise HTTPException(status_code=404, detail="Заказ не найден")
-    return order
+    orders = orders_result.scalars().all()
+    return [
+        {
+            "id": o.id,
+            "status": o.status,
+            "product_type": o.product_type.name,
+            "color": o.color.name,
+            "size_label": o.size_label,
+            "recommended_price": str(o.recommended_price) if o.recommended_price else None,
+            "final_price": str(o.final_price) if o.final_price else None,
+            "custom_images": o.custom_images,
+            "created_at": o.created_at.isoformat(),
+        }
+        for o in orders
+    ]

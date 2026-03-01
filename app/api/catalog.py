@@ -1,8 +1,10 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+"""
+app/api/catalog.py
+"""
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.models.catalog import (
@@ -10,112 +12,128 @@ from app.models.catalog import (
     Print, PrintSize, ReadyProduct,
 )
 from app.schemas.catalog import (
-    ProductTypeShort, ProductTypeDetail, ProductTypeColorOut,
-    ProductTypeSizeOut, PrintOut, ReadyProductOut,
+    ProductTypeShort, ProductTypeDetail,
+    ProductTypeSizeOut, ProductTypeColorOut,
+    PrintOut, ReadyProductOut, ProductNameInfo,
 )
+from app.utils.shared import media_url   # ← media_url вместо full_url
 
-router = APIRouter(prefix="/catalog", tags=["Каталог"])
+router = APIRouter(prefix="/catalog", tags=["catalog"])
 
 
-@router.get("/types", response_model=list[ProductTypeShort], summary="Все типы изделий")
-async def get_product_types(db: AsyncSession = Depends(get_db)):
+def _patch_type(t: ProductType):
+    t.size_chart_url    = media_url(t.size_chart_url)
+    t.color_palette_url = media_url(t.color_palette_url)
+
+
+@router.get("/types", response_model=list[ProductTypeShort])
+async def list_types(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(ProductType).where(ProductType.is_active == True)
+        select(ProductType).where(ProductType.is_active == True).order_by(ProductType.id)
     )
-    return result.scalars().all()
+    types = result.scalars().all()
+    for t in types:
+        _patch_type(t)
+    return types
 
 
-@router.get("/types/{type_id}", response_model=ProductTypeDetail, summary="Тип изделия с размерами и цветами")
-async def get_product_type(type_id: int, db: AsyncSession = Depends(get_db)):
+@router.get("/types/{type_id}", response_model=ProductTypeDetail)
+async def get_type(type_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(ProductType)
+        .where(ProductType.id == type_id)
         .options(
             selectinload(ProductType.sizes),
             selectinload(ProductType.colors).selectinload(ProductTypeColor.color),
         )
-        .where(ProductType.id == type_id, ProductType.is_active == True)
     )
     pt = result.scalar_one_or_none()
-    if not pt:
-        raise HTTPException(status_code=404, detail="Тип изделия не найден")
+    if pt:
+        _patch_type(pt)
     return pt
 
 
-@router.get("/types/{type_id}/colors", response_model=list[ProductTypeColorOut], summary="Доступные цвета")
+@router.get("/types/{type_id}/sizes", response_model=list[ProductTypeSizeOut])
+async def get_type_sizes(type_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ProductTypeSize)
+        .where(ProductTypeSize.product_type_id == type_id)
+        .order_by(ProductTypeSize.id)
+    )
+    return result.scalars().all()
+
+
+@router.get("/types/{type_id}/colors", response_model=list[ProductTypeColorOut])
 async def get_type_colors(type_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(ProductTypeColor)
-        .options(selectinload(ProductTypeColor.color))
         .where(ProductTypeColor.product_type_id == type_id)
+        .options(selectinload(ProductTypeColor.color))
+        .order_by(ProductTypeColor.id)
     )
     return result.scalars().all()
 
 
-@router.get("/types/{type_id}/sizes", response_model=list[ProductTypeSizeOut], summary="Размерная сетка")
-async def get_type_sizes(type_id: int, db: AsyncSession = Depends(get_db)):
+@router.get("/types/{type_id}/names", response_model=list[ProductNameInfo])
+async def get_type_product_names(type_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(ProductTypeSize).where(ProductTypeSize.product_type_id == type_id)
+        select(ReadyProduct)
+        .where(ReadyProduct.product_type_id == type_id, ReadyProduct.is_active == True)
     )
-    return result.scalars().all()
+    products = result.scalars().all()
+
+    name_map: dict[str, dict] = {}
+    for p in products:
+        if p.name not in name_map:
+            name_map[p.name] = {"available_color_ids": set(), "total_count": 0}
+        name_map[p.name]["total_count"] += 1
+        if p.stock_quantity > 0:
+            name_map[p.name]["available_color_ids"].add(p.color_id)
+
+    return [
+        ProductNameInfo(
+            name=name,
+            available_color_ids=sorted(data["available_color_ids"]),
+            total_count=data["total_count"],
+        )
+        for name, data in name_map.items()
+    ]
 
 
-@router.get("/prints", response_model=list[PrintOut], summary="Каталог принтов/вышивок")
-async def get_prints(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Print)
-        .options(selectinload(Print.sizes))
-        .where(Print.is_active == True)
-    )
-    return result.scalars().all()
-
-
-@router.get("/prints/{print_id}", response_model=PrintOut, summary="Принт с размерами")
-async def get_print(print_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Print)
-        .options(selectinload(Print.sizes))
-        .where(Print.id == print_id, Print.is_active == True)
-    )
-    p = result.scalar_one_or_none()
-    if not p:
-        raise HTTPException(status_code=404, detail="Принт не найден")
-    return p
-
-
-@router.get("/ready", response_model=list[ReadyProductOut], summary="Готовый мерч на складе")
-async def get_ready_products(
-    product_type_id: Optional[int] = None,
-    color_id: Optional[int] = None,
+@router.get("/ready", response_model=list[ReadyProductOut])
+async def list_ready(
+    product_type_id: int | None = Query(None),
+    color_id:        int | None = Query(None),
+    name:            str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    query = (
-        select(ReadyProduct)
-        .options(
-            selectinload(ReadyProduct.product_type),
-            selectinload(ReadyProduct.color),
-        )
-        .where(ReadyProduct.is_active == True, ReadyProduct.stock_quantity > 0)
-    )
+    q = select(ReadyProduct).where(ReadyProduct.is_active == True)
     if product_type_id:
-        query = query.where(ReadyProduct.product_type_id == product_type_id)
+        q = q.where(ReadyProduct.product_type_id == product_type_id)
     if color_id:
-        query = query.where(ReadyProduct.color_id == color_id)
-
-    result = await db.execute(query)
-    return result.scalars().all()
-
-
-@router.get("/ready/{product_id}", response_model=ReadyProductOut, summary="Конкретный товар")
-async def get_ready_product(product_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(ReadyProduct)
-        .options(
-            selectinload(ReadyProduct.product_type),
-            selectinload(ReadyProduct.color),
-        )
-        .where(ReadyProduct.id == product_id, ReadyProduct.is_active == True)
+        q = q.where(ReadyProduct.color_id == color_id)
+    if name:
+        q = q.where(ReadyProduct.name == name)
+    q = q.options(
+        selectinload(ReadyProduct.product_type),
+        selectinload(ReadyProduct.color),
     )
-    p = result.scalar_one_or_none()
-    if not p:
-        raise HTTPException(status_code=404, detail="Товар не найден")
-    return p
+    result   = await db.execute(q)
+    products = result.scalars().all()
+    for p in products:
+        p.image_url = media_url(p.image_url)
+    return products
+
+
+@router.get("/prints", response_model=list[PrintOut])
+async def list_prints(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Print)
+        .where(Print.is_active == True)
+        .options(selectinload(Print.sizes))
+        .order_by(Print.id)
+    )
+    prints = result.scalars().all()
+    for p in prints:
+        p.image_url = media_url(p.image_url)
+    return prints
