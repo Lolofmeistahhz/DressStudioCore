@@ -1,10 +1,16 @@
+# app/admin/views.py
 """
-app/admin/views.py
-
 Админка с улучшенным UX: enum, связи, предпросмотр изображений.
-Исправлена проблема с joined loader.
+Исправлена проблема с joined loader для связанных полей в списках:
+используются relationship-атрибуты (product_type, color, user и т.д.)
+вместо столбцовых атрибутов с суффиксом _id.
 """
+
+import uuid
 import logging
+from pathlib import Path
+from typing import Any, Dict
+
 from starlette.requests import Request
 from starlette_admin.contrib.sqla import ModelView
 from starlette_admin.fields import (
@@ -12,7 +18,9 @@ from starlette_admin.fields import (
     EnumField, RelationField, ImageField, TextAreaField,
     JSONField, DateTimeField
 )
+from starlette_admin.helpers import prettify_class_name
 
+from app.core.config import settings
 from app.models.user import User, UserRole, DeliveryCarrier
 from app.models.catalog import (
     Color, ProductType, ProductTypeSize, ProductTypeColor,
@@ -38,11 +46,13 @@ class BaseModelView(ModelView):
 class UserAdmin(BaseModelView):
     """Админка для пользователей."""
 
-    column_list = ["id", "full_name", "username", "phone", "role",
-                   "delivery_carrier", "delivery_city", "created_at"]
-    column_searchable_list = ["full_name", "username", "phone"]
-    column_sortable_list = ["id", "created_at", "role"]
-    column_filters = ["role", "delivery_carrier"]
+    column_list = [
+        User.id, "full_name", "username", "phone", "role",
+        "delivery_carrier", "delivery_city", "created_at"
+    ]
+    column_searchable_list = [User.full_name, User.username, User.phone]
+    column_sortable_list = [User.id, User.created_at, User.role]
+    column_filters = [User.role, User.delivery_carrier]
 
     fields = [
         StringField("full_name"),
@@ -83,8 +93,10 @@ class ColorAdmin(BaseModelView):
 class ProductTypeAdmin(BaseModelView):
     """Админка для типов продуктов."""
 
-    column_list = ["id", "name", "slug", "base_price", "is_active",
-                   "image_url", "size_chart_url", "color_palette_url"]
+    column_list = [
+        "id", "name", "slug", "base_price", "is_active",
+        "image_url", "size_chart_url", "color_palette_url"
+    ]
     column_searchable_list = ["name", "slug"]
     column_sortable_list = ["base_price", "is_active"]
     column_filters = ["is_active"]
@@ -111,17 +123,21 @@ class ProductTypeAdmin(BaseModelView):
 class ProductTypeSizeAdmin(BaseModelView):
     """Админка для размеров продуктов."""
 
-    column_list = ["id", "product_type_id", "label", "length", "width", "sleeve", "shoulders", "waist_width"]
-    column_labels = {"product_type_id": "Product Type"}
+    column_list = [
+        "id", "product_type", "label", "length", "width", "sleeve", "shoulders", "waist_width"
+    ]
+    column_labels = {
+        "product_type": "Product Type"
+    }
     column_formatters = {
-        "product_type_id": lambda obj, prop: obj.product_type.name if obj.product_type else ""
+        "product_type": lambda obj, prop: obj.product_type.name if getattr(obj, "product_type", None) else ""
     }
     column_searchable_list = ["label"]
-    column_sortable_list = ["product_type_id", "label"]
-    column_filters = ["product_type_id"]
+    column_sortable_list = ["product_type", "label"]
+    column_filters = ["product_type"]
 
     fields = [
-        RelationField("product_type_id", identity="product_type", label="Тип изделия"),
+        RelationField("product_type", identity="product_type", label="Тип изделия"),
         StringField("label"),
         StringField("length"),
         StringField("width"),
@@ -134,18 +150,23 @@ class ProductTypeSizeAdmin(BaseModelView):
 class ProductTypeColorAdmin(BaseModelView):
     """Админка для цветов продуктов."""
 
-    column_list = ["id", "product_type_id", "color_id", "in_stock"]
-    column_labels = {"product_type_id": "Product Type", "color_id": "Color"}
-    column_formatters = {
-        "product_type_id": lambda obj, prop: obj.product_type.name if obj.product_type else "",
-        "color_id": lambda obj, prop: obj.color.name if obj.color else ""
+    column_list = [
+        "id", "product_type", "color", "in_stock"
+    ]
+    column_labels = {
+        "product_type": "Product Type",
+        "color": "Color"
     }
-    column_sortable_list = ["product_type_id", "color_id"]
+    column_formatters = {
+        "product_type": lambda obj, prop: obj.product_type.name if getattr(obj, "product_type", None) else "",
+        "color": lambda obj, prop: obj.color.name if getattr(obj, "color", None) else ""
+    }
+    column_sortable_list = ["product_type", "color"]
     column_filters = ["in_stock"]
 
     fields = [
-        RelationField("product_type_id", identity="product_type", label="Тип изделия"),
-        RelationField("color_id", identity="color", label="Цвет"),
+        RelationField("product_type", identity="product_type", label="Тип изделия"),
+        RelationField("color", identity="color", label="Цвет"),
         BooleanField("in_stock"),
     ]
 
@@ -170,16 +191,20 @@ class PrintAdmin(BaseModelView):
 class PrintSizeAdmin(BaseModelView):
     """Админка для размеров принтов."""
 
-    column_list = ["id", "print_id", "label", "price"]
-    column_labels = {"print_id": "Print"}
+    column_list = [
+        "id", "print", "label", "price"
+    ]
+    column_labels = {
+        "print": "Print"
+    }
     column_formatters = {
-        "print_id": lambda obj, prop: obj.print.name if obj.print else ""
+        "print": lambda obj, prop: obj.print.name if getattr(obj, "print", None) else ""
     }
     column_searchable_list = ["label"]
-    column_sortable_list = ["print_id", "price"]
+    column_sortable_list = ["print", "price"]
 
     fields = [
-        RelationField("print_id", identity="print", label="Принт"),
+        RelationField("print", identity="print", label="Принт"),
         StringField("label"),
         FloatField("price"),
     ]
@@ -188,21 +213,26 @@ class PrintSizeAdmin(BaseModelView):
 class ReadyProductAdmin(BaseModelView):
     """Админка для готовых продуктов."""
 
-    column_list = ["id", "product_type_id", "color_id", "size_label",
-                   "price", "stock_quantity", "is_active", "image_url"]
-    column_labels = {"product_type_id": "Product Type", "color_id": "Color"}
+    column_list = [
+        "id", "product_type", "color", "size_label",
+        "price", "stock_quantity", "is_active", "image_url"
+    ]
+    column_labels = {
+        "product_type": "Product Type",
+        "color": "Color"
+    }
     column_formatters = {
-        "product_type_id": lambda obj, prop: obj.product_type.name if obj.product_type else "",
-        "color_id": lambda obj, prop: obj.color.name if obj.color else "",
+        "product_type": lambda obj, prop: obj.product_type.name if getattr(obj, "product_type", None) else "",
+        "color": lambda obj, prop: obj.color.name if getattr(obj, "color", None) else "",
         "image_url": lambda obj, prop: f'<img src="{obj.image_url}" height="40">' if obj.image_url else ''
     }
     column_searchable_list = ["size_label"]
     column_sortable_list = ["price", "stock_quantity"]
-    column_filters = ["is_active", "product_type_id", "color_id"]
+    column_filters = ["is_active", "product_type", "color"]
 
     fields = [
-        RelationField("product_type_id", identity="product_type", label="Тип изделия"),
-        RelationField("color_id", identity="color", label="Цвет"),
+        RelationField("product_type", identity="product_type", label="Тип изделия"),
+        RelationField("color", identity="color", label="Цвет"),
         StringField("size_label"),
         FloatField("price"),
         IntegerField("stock_quantity"),
@@ -214,18 +244,22 @@ class ReadyProductAdmin(BaseModelView):
 class CartItemAdmin(BaseModelView):
     """Админка для корзины."""
 
-    column_list = ["id", "user_id", "ready_product_id", "quantity", "added_at"]
-    column_labels = {"user_id": "User", "ready_product_id": "Ready Product"}
+    column_list = [
+        "id", "user", "ready_product", "quantity", "added_at"
+    ]
+    column_labels = {
+        "user": "User",
+        "ready_product": "Ready Product"
+    }
     column_formatters = {
-        "user_id": lambda obj, prop: obj.user.full_name if obj.user else "",
-        "ready_product_id": lambda obj, prop: f"{obj.ready_product.product_type.name} / {obj.ready_product.color.name} / {obj.ready_product.size_label}" if obj.ready_product else ""
+        "user": lambda obj, prop: obj.user.full_name if getattr(obj, "user", None) else "",
+        "ready_product": lambda obj, prop: f"{obj.ready_product.product_type.name} / {obj.ready_product.color.name} / {obj.ready_product.size_label}" if getattr(obj, "ready_product", None) else ""
     }
     column_sortable_list = ["added_at"]
-    column_searchable_list = []  # Убрали поиск по связанным полям
 
     fields = [
-        RelationField("user_id", identity="user", label="Пользователь"),
-        RelationField("ready_product_id", identity="ready_product", label="Товар"),
+        RelationField("user", identity="user", label="Пользователь"),
+        RelationField("ready_product", identity="ready_product", label="Товар"),
         IntegerField("quantity"),
         DateTimeField("added_at", read_only=True),
     ]
@@ -241,18 +275,22 @@ class ReadyOrderAdmin(BaseModelView):
     """Админка для готовых заказов."""
 
     page_size = 20
-    column_list = ["id", "user_id", "status", "total_price", "carrier",
-                   "delivery_city", "tracking_number", "created_at"]
-    column_labels = {"user_id": "User"}
+    column_list = [
+        "id", "user", "status", "total_price", "carrier",
+        "delivery_city", "tracking_number", "created_at"
+    ]
+    column_labels = {
+        "user": "User"
+    }
     column_formatters = {
-        "user_id": lambda obj, prop: obj.user.full_name if obj.user else ""
+        "user": lambda obj, prop: obj.user.full_name if getattr(obj, "user", None) else ""
     }
     column_sortable_list = ["created_at", "status", "total_price"]
-    column_searchable_list = ["tracking_number"]  # Убрали поиск по user.full_name
+    column_searchable_list = ["user.full_name", "tracking_number"]  # Поиск по связанному полю оставляем.
     column_filters = ["status", "carrier"]
 
     fields = [
-        RelationField("user_id", identity="user", label="Пользователь"),
+        RelationField("user", identity="user", label="Пользователь"),
         EnumField("status", enum=ReadyOrderStatus),
         FloatField("total_price", read_only=True),
         EnumField("carrier", enum=OrderDeliveryCarrier),
@@ -274,17 +312,21 @@ class ReadyOrderAdmin(BaseModelView):
 class ReadyOrderItemAdmin(BaseModelView):
     """Админка для элементов готовых заказов."""
 
-    column_list = ["id", "order_id", "ready_product_id", "quantity", "price_fixed"]
-    column_labels = {"order_id": "Order", "ready_product_id": "Ready Product"}
-    column_formatters = {
-        "order_id": lambda obj, prop: f"Order #{obj.order_id}",
-        "ready_product_id": lambda obj, prop: f"{obj.ready_product.product_type.name} / {obj.ready_product.color.name} / {obj.ready_product.size_label}" if obj.ready_product else ""
+    column_list = [
+        "id", "order", "ready_product", "quantity", "price_fixed"
+    ]
+    column_labels = {
+        "order": "Order",
+        "ready_product": "Ready Product"
     }
-    column_searchable_list = []  # Убрали поиск по связанным полям
+    column_formatters = {
+        "order": lambda obj, prop: f"Order #{obj.order_id}" if getattr(obj, "order_id", None) is not None else "",
+        "ready_product": lambda obj, prop: f"{obj.ready_product.product_type.name} / {obj.ready_product.color.name} / {obj.ready_product.size_label}" if getattr(obj, "ready_product", None) else ""
+    }
 
     fields = [
-        RelationField("order_id", identity="ready_order", label="Заказ"),
-        RelationField("ready_product_id", identity="ready_product", label="Товар"),
+        RelationField("order", identity="ready_order", label="Заказ"),
+        RelationField("ready_product", identity="ready_product", label="Товар"),
         IntegerField("quantity"),
         FloatField("price_fixed"),
     ]
@@ -300,26 +342,32 @@ class CustomOrderAdmin(BaseModelView):
     """Админка для кастомных заказов."""
 
     page_size = 20
-    column_list = ["id", "user_id", "status", "product_type_id", "color_id",
-                   "size_label", "recommended_price", "final_price", "created_at"]
-    column_labels = {"user_id": "User", "product_type_id": "Product Type", "color_id": "Color"}
+    column_list = [
+        "id", "user", "status", "product_type", "color",
+        "size_label", "recommended_price", "final_price", "created_at"
+    ]
+    column_labels = {
+        "user": "User",
+        "product_type": "Product Type",
+        "color": "Color"
+    }
     column_formatters = {
-        "user_id": lambda obj, prop: obj.user.full_name if obj.user else "",
-        "product_type_id": lambda obj, prop: obj.product_type.name if obj.product_type else "",
-        "color_id": lambda obj, prop: obj.color.name if obj.color else ""
+        "user": lambda obj, prop: obj.user.full_name if getattr(obj, "user", None) else "",
+        "product_type": lambda obj, prop: obj.product_type.name if getattr(obj, "product_type", None) else "",
+        "color": lambda obj, prop: obj.color.name if getattr(obj, "color", None) else ""
     }
     column_sortable_list = ["created_at", "status"]
-    column_searchable_list = ["admin_comment"]  # Убрали поиск по user.full_name
-    column_filters = ["status", "product_type_id", "color_id"]
+    column_searchable_list = ["user.full_name", "admin_comment"]
+    column_filters = ["status", "product_type", "color"]
 
     fields = [
-        RelationField("user_id", identity="user", label="Пользователь"),
+        RelationField("user", identity="user", label="Пользователь"),
         EnumField("status", enum=CustomOrderStatus),
-        RelationField("product_type_id", identity="product_type", label="Тип изделия"),
-        RelationField("color_id", identity="color", label="Цвет"),
+        RelationField("product_type", identity="product_type", label="Тип изделия"),
+        RelationField("color", identity="color", label="Цвет"),
         StringField("size_label"),
-        RelationField("print_id", identity="print", label="Принт (каталог)", required=False),
-        RelationField("print_size_id", identity="print_size", label="Размер принта", required=False),
+        RelationField("print", identity="print", label="Принт (каталог)", required=False),
+        RelationField("print_size", identity="print_size", label="Размер принта", required=False),
         JSONField("custom_images", label="Свои изображения (массив URL)"),
         TextAreaField("comment", label="Комментарий клиента"),
         FloatField("recommended_price", read_only=True),
@@ -341,11 +389,12 @@ class PaymentAdmin(BaseModelView):
     """Админка для платежей."""
 
     page_size = 20
-    column_list = ["id", "entity_type", "entity_id", "amount", "status",
-                   "yookassa_payment_id", "created_at"]
+    column_list = [
+        "id", "entity_type", "entity_id", "amount", "status",
+        "yookassa_payment_id", "created_at"
+    ]
     column_sortable_list = ["created_at", "status"]
     column_filters = ["entity_type", "status"]
-    column_searchable_list = ["yookassa_payment_id"]
 
     fields = [
         EnumField("entity_type", enum=PaymentEntityType),
@@ -366,19 +415,23 @@ class PaymentAdmin(BaseModelView):
 class CanvasTemplateAdmin(BaseModelView):
     """Админка для шаблонов канваса."""
 
-    column_list = ["id", "product_type_id", "color_id", "canvas_image_url", "is_active"]
-    column_labels = {"product_type_id": "Product Type", "color_id": "Color"}
+    column_list = [
+        "id", "product_type", "color", "canvas_image_url", "is_active"
+    ]
+    column_labels = {
+        "product_type": "Product Type",
+        "color": "Color"
+    }
     column_formatters = {
-        "product_type_id": lambda obj, prop: obj.product_type.name if obj.product_type else "",
-        "color_id": lambda obj, prop: obj.color.name if obj.color else "",
+        "product_type": lambda obj, prop: obj.product_type.name if getattr(obj, "product_type", None) else "",
+        "color": lambda obj, prop: obj.color.name if getattr(obj, "color", None) else "",
         "canvas_image_url": lambda obj, prop: f'<img src="{obj.canvas_image_url}" height="40">' if obj.canvas_image_url else ''
     }
-    column_filters = ["is_active", "product_type_id", "color_id"]
-    column_searchable_list = []  # Добавили пустой поиск
+    column_filters = ["is_active", "product_type", "color"]
 
     fields = [
-        RelationField("product_type_id", identity="product_type", label="Тип изделия"),
-        RelationField("color_id", identity="color", label="Цвет"),
+        RelationField("product_type", identity="product_type", label="Тип изделия"),
+        RelationField("color", identity="color", label="Цвет"),
         ImageField("canvas_image_url", label="Изображение канваса"),
         IntegerField("width_px"),
         IntegerField("height_px"),
@@ -392,20 +445,24 @@ class CanvasTemplateAdmin(BaseModelView):
 class ConstructorOrderAdmin(BaseModelView):
     """Админка для заказов конструктора."""
 
-    column_list = ["id", "user_id", "canvas_template_id", "status", "final_price", "created_at"]
-    column_labels = {"user_id": "User", "canvas_template_id": "Canvas Template"}
+    column_list = [
+        "id", "user", "canvas_template", "status", "final_price", "created_at"
+    ]
+    column_labels = {
+        "user": "User",
+        "canvas_template": "Canvas Template"
+    }
     column_formatters = {
-        "user_id": lambda obj, prop: obj.user.full_name if obj.user else "",
-        "canvas_template_id": lambda obj, prop: f"{obj.canvas_template.product_type.name} / {obj.canvas_template.color.name}" if obj.canvas_template else "",
-        "snapshot_url": lambda obj, prop: f'<img src="{obj.snapshot_url}" height="40">' if obj.snapshot_url else ''
+        "user": lambda obj, prop: obj.user.full_name if getattr(obj, "user", None) else "",
+        "canvas_template": lambda obj, prop: f"{obj.canvas_template.product_type.name} / {obj.canvas_template.color.name}" if getattr(obj, "canvas_template", None) else "",
+        "snapshot_url": lambda obj, prop: f'<img src="{obj.snapshot_url}" height="40">' if getattr(obj, "snapshot_url", None) else ''
     }
     column_sortable_list = ["created_at", "status"]
     column_filters = ["status"]
-    column_searchable_list = []  # Добавили пустой поиск
 
     fields = [
-        RelationField("user_id", identity="user", label="Пользователь"),
-        RelationField("canvas_template_id", identity="canvas_template", label="Шаблон"),
+        RelationField("user", identity="user", label="Пользователь"),
+        RelationField("canvas_template", identity="canvas_template", label="Шаблон"),
         JSONField("placements", label="Размещения принтов"),
         ImageField("snapshot_url", label="Превью"),
         FloatField("recommended_price", read_only=True),
