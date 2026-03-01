@@ -7,6 +7,7 @@ from app.utils.shared import save_uploaded_file
 logging.basicConfig(level=logging.INFO)
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -54,40 +55,43 @@ app = FastAPI(
 
 # ── Админка ────────────────────────────────────────────────────────────────────
 
-# ВАЖНО: Указываем кастомный base_url для админки, чтобы избежать конфликта с API
-ADMIN_PREFIX = "/control"  # Не /admin и не /api, чтобы избежать конфликтов
-
 admin = Admin(
     sync_engine,
     title="Студия вышивки · Панель управления",
     auth_provider=UsernameAndPasswordProvider(),
     middlewares=[Middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)],
-    templates_dir="templates/admin",
-    base_url=ADMIN_PREFIX,  # Используем кастомный префикс
+    base_url="/control",
 )
 
 
-# ── Эндпоинт для загрузки файлов ──────────────────────────────────────────────
+# ── Эндпоинт для загрузки файлов (исправлен) ──────────────────────────────────
 
-@app.post("/api/v1/upload", tags=["Upload"])
+@app.post("/api/v1/media/upload", tags=["Upload"])
 async def upload_file(file: UploadFile = File(...)):
     """
     Загружает файл на сервер и возвращает ссылку на него.
-    Используется для загрузки изображений в админке.
+    Возвращает JSON, а не редирект.
     """
-
     if not file:
         raise HTTPException(status_code=400, detail="Файл не передан")
 
-    file_url = await save_uploaded_file(file)
+    try:
+        file_url = await save_uploaded_file(file)
 
-    if not file_url:
-        raise HTTPException(status_code=500, detail="Не удалось сохранить файл")
+        if not file_url:
+            raise HTTPException(status_code=500, detail="Не удалось сохранить файл")
 
-    return {
-        "success": True,
-        "url": file_url
-    }
+        # Возвращаем JSON, а не редирект
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "url": file_url
+            }
+        )
+    except Exception as e:
+        logging.error(f"Ошибка загрузки файла: {e}")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
 
 
 # ── Регистрация представлений админки ─────────────────────────────────────────
@@ -120,11 +124,11 @@ app.include_router(ready_orders_router, prefix=PREFIX)
 app.include_router(custom_orders_router, prefix=PREFIX)
 app.include_router(payments_router, prefix=PREFIX)
 
-# Создаем директорию для загрузок
+# Статические файлы
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount("/media", StaticFiles(directory=settings.UPLOAD_DIR), name="media")
 
-# ВАЖНО: Монтируем админку ПОСЛЕ всех API роутеров
+# Монтируем админку
 admin.mount_to(app)
 
 @app.get("/")
