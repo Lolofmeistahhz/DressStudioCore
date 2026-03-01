@@ -7,7 +7,6 @@ class ColorOut(BaseModel):
     id: int
     name: str
     hex_code: str
-    palette_image_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -28,7 +27,6 @@ class ProductTypeColorOut(BaseModel):
     id: int
     color: ColorOut
     in_stock: bool
-    palette_image_url: Optional[str] = None   # ← было обязательным, теперь Optional
 
     model_config = {"from_attributes": True}
 
@@ -39,6 +37,8 @@ class ProductTypeShort(BaseModel):
     slug: str
     base_price: Decimal
     image_url: Optional[str] = None
+    size_chart_url: Optional[str] = None
+    color_palette_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -51,10 +51,11 @@ class ProductTypeDetail(BaseModel):
     description: Optional[str] = None
     image_url: Optional[str] = None
     size_chart_url: Optional[str] = None
+    color_palette_url: Optional[str] = None
     composition: Optional[str] = None
     notes: Optional[str] = None
-    sizes: list[ProductTypeSizeOut]
-    colors: list[ProductTypeColorOut]
+    sizes: list[ProductTypeSizeOut] = []
+    colors: list[ProductTypeColorOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -71,7 +72,7 @@ class PrintOut(BaseModel):
     id: int
     name: str
     image_url: Optional[str] = None
-    sizes: list[PrintSizeOut]
+    sizes: list[PrintSizeOut] = []
 
     model_config = {"from_attributes": True}
 

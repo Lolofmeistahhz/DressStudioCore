@@ -16,7 +16,6 @@ class Color(Base):
     id:                Mapped[int]        = mapped_column(primary_key=True)
     name:              Mapped[str]        = mapped_column(String(100))
     hex_code:          Mapped[str]        = mapped_column(String(7))    # #RRGGBB
-    palette_image_url: Mapped[str | None] = mapped_column(String(500))  # общая палитра
 
     product_type_colors: Mapped[list["ProductTypeColor"]] = relationship(back_populates="color")
 
@@ -33,6 +32,7 @@ class ProductType(Base):
     description:    Mapped[str | None] = mapped_column(Text)
     image_url:      Mapped[str | None] = mapped_column(String(500))         # фото изделия
     size_chart_url: Mapped[str | None] = mapped_column(String(500))         # таблица размеров
+    color_palette_url: Mapped[str | None] = mapped_column(String(500))  # общая палитра
     composition:    Mapped[str | None] = mapped_column(String(500))         # состав ткани
     notes:          Mapped[str | None] = mapped_column(Text)
     is_active:      Mapped[bool]       = mapped_column(Boolean, default=True)
