@@ -10,10 +10,9 @@ class UserUpsert(BaseModel):
 
 
 class DeliveryUpdate(BaseModel):
-    delivery_name: Optional[str] = None
-    delivery_phone: Optional[str] = None
-    delivery_city: Optional[str] = None
-    delivery_address: Optional[str] = None
+    delivery_name:    Optional[str]             = None
+    delivery_city:    Optional[str]             = None
+    delivery_address: Optional[str]             = None
     delivery_carrier: Optional[DeliveryCarrier] = None
 
 
@@ -24,15 +23,14 @@ class PhoneUpdate(BaseModel):
 class UserOut(BaseModel):
     id: int
     telegram_id: int
-    username: Optional[str]
-    full_name: Optional[str]
-    phone: Optional[str]
+    username:         Optional[str] = None
+    full_name:        Optional[str] = None
+    phone:            Optional[str] = None
     role: str
-    delivery_name: Optional[str]
-    delivery_phone: Optional[str]
-    delivery_city: Optional[str]
-    delivery_address: Optional[str]
-    delivery_carrier: Optional[str]
+    delivery_name:    Optional[str] = None
+    delivery_city:    Optional[str] = None
+    delivery_address: Optional[str] = None
+    delivery_carrier: Optional[str] = None
     delivery_complete: bool
 
     model_config = {"from_attributes": True}

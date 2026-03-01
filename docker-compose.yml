@@ -9,6 +9,7 @@ services:
       - "8666:8666"
     volumes:
       - ./logs:/app/logs
+      - ./media:/app/media
     environment:
       - TZ=Europe/Moscow
       - DATABASE_URL=postgresql://postgres:pg_pass_studio@postgres-fastapi:5432/lembro_db

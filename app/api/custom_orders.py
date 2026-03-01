@@ -21,11 +21,7 @@ async def _get_user(telegram_id: int, db: AsyncSession) -> User:
     return user
 
 
-def _calc_recommended_price(
-    product_type: ProductType,
-    print_size: Optional[PrintSize],
-) -> Decimal:
-    """base_price изделия + цена размера вышивки."""
+def _calc_recommended_price(product_type: ProductType, print_size: Optional[PrintSize]) -> Decimal:
     price = product_type.base_price
     if print_size:
         price += print_size.price
@@ -54,8 +50,7 @@ async def create_custom_order(
         raise HTTPException(status_code=404, detail="Тип изделия не найден")
 
     color_result = await db.execute(select(Color).where(Color.id == data.color_id))
-    color = color_result.scalar_one_or_none()
-    if not color:
+    if not color_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Цвет не найден")
 
     print_size: Optional[PrintSize] = None
@@ -88,10 +83,10 @@ async def create_custom_order(
         custom_images=data.custom_images,
         comment=data.comment,
         recommended_price=recommended_price,
-        final_price=recommended_price,   # админ может изменить
+        final_price=recommended_price,
         carrier=user.delivery_carrier,
         delivery_name=user.delivery_name,
-        delivery_phone=user.delivery_phone,
+        delivery_phone=user.phone,          # единственный телефон
         delivery_city=user.delivery_city,
         delivery_address=user.delivery_address,
     )
@@ -112,12 +107,8 @@ async def get_my_custom_orders(telegram_id: int, db: AsyncSession = Depends(get_
     return result.scalars().all()
 
 
-@router.get("/{order_id}", response_model=CustomOrderOut, summary="Детали кастомного заказа")
-async def get_custom_order(
-    order_id: int,
-    telegram_id: int,
-    db: AsyncSession = Depends(get_db),
-):
+@router.get("/{order_id}", response_model=CustomOrderOut, summary="Детали заказа")
+async def get_custom_order(order_id: int, telegram_id: int, db: AsyncSession = Depends(get_db)):
     user = await _get_user(telegram_id, db)
     result = await db.execute(
         select(CustomOrder).where(

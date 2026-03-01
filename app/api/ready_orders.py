@@ -23,10 +23,6 @@ async def _get_user(telegram_id: int, db: AsyncSession) -> User:
 
 @router.post("/", response_model=ReadyOrderOut, summary="Оформить заказ из корзины")
 async def create_ready_order(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Оформляет заказ из корзины.
-    Требует заполненных данных доставки (delivery_complete = True).
-    """
     user = await _get_user(telegram_id, db)
 
     if not user.delivery_complete:
@@ -63,7 +59,7 @@ async def create_ready_order(telegram_id: int, db: AsyncSession = Depends(get_db
         total_price=total,
         carrier=user.delivery_carrier,
         delivery_name=user.delivery_name,
-        delivery_phone=user.delivery_phone,
+        delivery_phone=user.phone,          # берём единственный телефон
         delivery_city=user.delivery_city,
         delivery_address=user.delivery_address,
     )
