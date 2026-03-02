@@ -1,11 +1,14 @@
 """
 app/admin/views.py
 """
+import json
 import logging
+from markupsafe import Markup
 from starlette.requests import Request
 from starlette_admin.contrib.sqla import ModelView
 from starlette_admin.fields import (
-    StringField, IntegerField, FloatField, BooleanField, EnumField, DateTimeField
+    StringField, IntegerField, FloatField, BooleanField,
+    EnumField, DateTimeField, BaseField,
 )
 
 from app.models.user import User, UserRole, DeliveryCarrier
@@ -23,29 +26,70 @@ from app.models.constructor import CanvasTemplate, ConstructorOrder, Constructor
 logger = logging.getLogger(__name__)
 
 
+# ── Кастомное поле: список URL → кликабельные ссылки ─────────────────────────
+
+class ImageLinksField(BaseField):
+    """
+    Отображает JSON-список URL загруженных фото как кликабельные ссылки.
+    В форме редактирования — только для чтения.
+    """
+
+    async def parse_form_data(self, request, form_data, action):
+        return None  # только для чтения
+
+    async def serialize_value(self, request, value, action):
+        if not value:
+            return ""
+        try:
+            urls = json.loads(value) if isinstance(value, str) else value
+        except Exception:
+            return str(value)
+        if not urls:
+            return "—"
+        links = [
+            f'<a href="{url}" target="_blank" rel="noopener">'
+            f'📷 Фото {i + 1}'
+            f'</a>'
+            for i, url in enumerate(urls)
+        ]
+        return Markup(" &nbsp;|&nbsp; ".join(links))
+
+    def additional_css_links(self, request, action):
+        return []
+
+    def additional_js_links(self, request, action):
+        return []
+
+
+# ── Базовый класс ─────────────────────────────────────────────────────────────
+
 class BaseModelView(ModelView):
     page_size = 20
 
+
+# ── Пользователи ─────────────────────────────────────────────────────────────
 
 class UserAdmin(BaseModelView):
     column_list = ["id", "telegram_id", "full_name", "username", "phone", "role", "created_at"]
     column_searchable_list = ["full_name", "username", "phone"]
     column_sortable_list = ["id", "created_at"]
     fields = [
-        IntegerField("telegram_id",       label="Telegram ID"),
-        StringField("username",           label="Username"),
-        StringField("full_name",          label="ФИО"),
-        StringField("phone",              label="Телефон"),
-        EnumField("role",                 enum=UserRole,        label="Роль"),
-        EnumField("delivery_carrier",     enum=DeliveryCarrier, label="Служба доставки", required=False),
-        StringField("delivery_name",      label="Имя получателя"),
-        StringField("delivery_city",      label="Город"),
-        StringField("delivery_address",   label="Адрес"),
-        DateTimeField("created_at",       label="Дата регистрации", read_only=True),
+        IntegerField("telegram_id",     label="Telegram ID"),
+        StringField("username",         label="Username"),
+        StringField("full_name",        label="ФИО"),
+        StringField("phone",            label="Телефон"),
+        EnumField("role",               enum=UserRole,        label="Роль"),
+        EnumField("delivery_carrier",   enum=DeliveryCarrier, label="Служба доставки", required=False),
+        StringField("delivery_name",    label="Имя получателя"),
+        StringField("delivery_city",    label="Город"),
+        StringField("delivery_address", label="Адрес"),
+        DateTimeField("created_at",     label="Дата регистрации", read_only=True),
     ]
     def can_delete(self, request: Request) -> bool:
         return False
 
+
+# ── Цвета ─────────────────────────────────────────────────────────────────────
 
 class ColorAdmin(BaseModelView):
     column_list = ["id", "name", "hex_code"]
@@ -56,11 +100,9 @@ class ColorAdmin(BaseModelView):
     ]
 
 
+# ── Типы изделий ─────────────────────────────────────────────────────────────
+
 class ProductTypeAdmin(BaseModelView):
-    """
-    image_url удалён из модели — изображения хранятся на уровне конкретных товаров.
-    Остались: size_chart_url (таблица размеров) и color_palette_url (палитра цветов).
-    """
     column_list = ["id", "name", "slug", "base_price", "is_active"]
     column_searchable_list = ["name", "slug"]
     fields = [
@@ -73,9 +115,11 @@ class ProductTypeAdmin(BaseModelView):
         StringField("notes",             label="Примечания"),
         StringField("size_chart_url",    label="URL таблицы размеров"),
         StringField("color_palette_url", label="URL палитры цветов"),
-        # image_url удалён
+        # image_url удалён из модели
     ]
 
+
+# ── Размеры типов ─────────────────────────────────────────────────────────────
 
 class ProductTypeSizeAdmin(BaseModelView):
     column_list = ["id", "product_type_id", "label", "length", "width", "sleeve", "shoulders", "waist_width"]
@@ -91,6 +135,8 @@ class ProductTypeSizeAdmin(BaseModelView):
     ]
 
 
+# ── Цвета типов ───────────────────────────────────────────────────────────────
+
 class ProductTypeColorAdmin(BaseModelView):
     column_list = ["id", "product_type_id", "color_id", "in_stock"]
     fields = [
@@ -100,12 +146,14 @@ class ProductTypeColorAdmin(BaseModelView):
     ]
 
 
+# ── Принты ────────────────────────────────────────────────────────────────────
+
 class PrintAdmin(BaseModelView):
     column_list = ["id", "name", "is_active"]
     column_searchable_list = ["name"]
     fields = [
-        StringField("name",      label="Название"),
-        StringField("image_url", label="URL изображения"),
+        StringField("name",       label="Название"),
+        StringField("image_url",  label="URL изображения"),
         BooleanField("is_active", label="Активен"),
     ]
 
@@ -115,22 +163,20 @@ class PrintSizeAdmin(BaseModelView):
     column_searchable_list = ["label"]
     fields = [
         IntegerField("print_id", label="ID принта"),
-        StringField("label",     label="Размер (5×5 см / 10×10 см)"),
+        StringField("label",     label="Размер (5×5 см)"),
         FloatField("price",      label="Цена"),
     ]
 
 
+# ── Готовый мерч ──────────────────────────────────────────────────────────────
+
 class ReadyProductAdmin(BaseModelView):
-    """
-    name — название модели внутри типа (Базовая / Оверсайз / Цветочная и т.д.).
-    Один тип может иметь несколько названий с разными цветами/размерами.
-    """
     column_list = ["id", "product_type_id", "name", "color_id", "size_label", "price", "stock_quantity", "is_active"]
     column_searchable_list = ["name", "size_label"]
     column_sortable_list = ["product_type_id", "name", "price", "stock_quantity"]
     fields = [
         IntegerField("product_type_id", label="ID типа изделия"),
-        StringField("name",             label="Название модели"),   # ← новое поле
+        StringField("name",             label="Название модели"),
         IntegerField("color_id",        label="ID цвета"),
         StringField("size_label",       label="Размер"),
         FloatField("price",             label="Цена"),
@@ -139,6 +185,8 @@ class ReadyProductAdmin(BaseModelView):
         BooleanField("is_active",       label="Активен"),
     ]
 
+
+# ── Корзина ───────────────────────────────────────────────────────────────────
 
 class CartItemAdmin(BaseModelView):
     column_list = ["id", "user_id", "ready_product_id", "quantity", "added_at"]
@@ -152,20 +200,22 @@ class CartItemAdmin(BaseModelView):
         return False
 
 
+# ── Заказы готового мерча ─────────────────────────────────────────────────────
+
 class ReadyOrderAdmin(BaseModelView):
     column_list = ["id", "user_id", "status", "total_price", "created_at"]
     column_sortable_list = ["created_at", "status"]
     fields = [
-        IntegerField("user_id",          label="ID пользователя"),
-        EnumField("status",              enum=ReadyOrderStatus,        label="Статус"),
-        FloatField("total_price",        label="Сумма"),
-        EnumField("carrier",             enum=OrderDeliveryCarrier,    label="Служба доставки"),
-        StringField("delivery_name",     label="Имя получателя"),
-        StringField("delivery_phone",    label="Телефон"),
-        StringField("delivery_city",     label="Город"),
-        StringField("delivery_address",  label="Адрес"),
-        StringField("tracking_number",   label="Трекинг номер"),
-        DateTimeField("created_at",      label="Создан", read_only=True),
+        IntegerField("user_id",         label="ID пользователя"),
+        EnumField("status",             enum=ReadyOrderStatus,     label="Статус"),
+        FloatField("total_price",       label="Сумма"),
+        EnumField("carrier",            enum=OrderDeliveryCarrier, label="Служба доставки"),
+        StringField("delivery_name",    label="Имя получателя"),
+        StringField("delivery_phone",   label="Телефон"),
+        StringField("delivery_city",    label="Город"),
+        StringField("delivery_address", label="Адрес"),
+        StringField("tracking_number",  label="Трекинг номер"),
+        DateTimeField("created_at",     label="Создан", read_only=True),
     ]
     def can_create(self, request: Request) -> bool:
         return False
@@ -174,64 +224,72 @@ class ReadyOrderAdmin(BaseModelView):
 class ReadyOrderItemAdmin(BaseModelView):
     column_list = ["id", "order_id", "ready_product_id", "quantity", "price_fixed"]
     fields = [
-        IntegerField("order_id",          label="ID заказа"),
-        IntegerField("ready_product_id",  label="ID товара"),
-        IntegerField("quantity",          label="Количество"),
-        FloatField("price_fixed",         label="Цена на момент заказа"),
+        IntegerField("order_id",         label="ID заказа"),
+        IntegerField("ready_product_id", label="ID товара"),
+        IntegerField("quantity",         label="Количество"),
+        FloatField("price_fixed",        label="Цена на момент заказа"),
     ]
     def can_create(self, request: Request) -> bool:
         return False
 
+
+# ── Кастомные заказы ──────────────────────────────────────────────────────────
 
 class CustomOrderAdmin(BaseModelView):
     column_list = ["id", "user_id", "status", "product_type_id", "recommended_price", "final_price", "created_at"]
     column_sortable_list = ["created_at", "status"]
     fields = [
-        IntegerField("user_id",            label="ID пользователя"),
-        EnumField("status",                enum=CustomOrderStatus,     label="Статус"),
-        IntegerField("product_type_id",    label="ID типа изделия"),
-        IntegerField("color_id",           label="ID цвета"),
-        StringField("size_label",          label="Размер"),
-        IntegerField("print_id",           label="ID принта"),
-        IntegerField("print_size_id",      label="ID размера принта"),
-        # custom_images — JSON список URL, только для чтения в таблице
-        StringField("comment",             label="Комментарий клиента"),
-        StringField("admin_comment",       label="Комментарий админа"),
-        FloatField("recommended_price",    label="Рекомендуемая цена"),
-        FloatField("final_price",          label="Финальная цена"),
-        EnumField("carrier",               enum=OrderDeliveryCarrier,  label="Служба доставки"),
-        StringField("delivery_name",       label="Имя получателя"),
-        StringField("delivery_phone",      label="Телефон"),
-        StringField("delivery_city",       label="Город"),
-        StringField("delivery_address",    label="Адрес"),
-        DateTimeField("created_at",        label="Создан", read_only=True),
+        IntegerField("user_id",          label="ID пользователя"),
+        EnumField("status",              enum=CustomOrderStatus,    label="Статус"),
+        IntegerField("product_type_id",  label="ID типа изделия"),
+        IntegerField("color_id",         label="ID цвета"),
+        StringField("size_label",        label="Размер"),
+        IntegerField("print_id",         label="ID принта"),
+        IntegerField("print_size_id",    label="ID размера принта"),
+        StringField("comment",           label="Комментарий клиента"),
+        StringField("admin_comment",     label="Комментарий админа"),
+        FloatField("recommended_price",  label="Рекомендуемая цена"),
+        FloatField("final_price",        label="Финальная цена"),
+        StringField("tracking_number", label="Трек-номер"),
+        # Кликабельные ссылки на загруженные фото
+        ImageLinksField("custom_images", label="Фото вышивки", read_only=True),
+        EnumField("carrier",             enum=OrderDeliveryCarrier, label="Служба доставки"),
+        StringField("delivery_name",     label="Имя получателя"),
+        StringField("delivery_phone",    label="Телефон"),
+        StringField("delivery_city",     label="Город"),
+        StringField("delivery_address",  label="Адрес"),
+        DateTimeField("created_at",      label="Создан", read_only=True),
     ]
     def can_delete(self, request: Request) -> bool:
         return False
 
 
+# ── Платежи ───────────────────────────────────────────────────────────────────
+
 class PaymentAdmin(BaseModelView):
     column_list = ["id", "entity_type", "entity_id", "amount", "status", "created_at"]
     column_sortable_list = ["created_at", "status"]
     fields = [
-        EnumField("entity_type",          enum=PaymentEntityType, label="Тип"),
-        IntegerField("entity_id",         label="ID сущности"),
-        FloatField("amount",              label="Сумма"),
-        EnumField("status",               enum=PaymentStatus,     label="Статус"),
+        EnumField("entity_type",           enum=PaymentEntityType, label="Тип"),
+        IntegerField("entity_id",          label="ID сущности"),
+        FloatField("amount",               label="Сумма"),
+        EnumField("status",                enum=PaymentStatus,     label="Статус"),
         StringField("yookassa_payment_id", label="Yookassa ID"),
-        DateTimeField("created_at",       label="Создан", read_only=True),
+        DateTimeField("created_at",        label="Создан", read_only=True),
     ]
     def can_create(self, request: Request) -> bool:
         return False
 
 
+# ── Конструктор ───────────────────────────────────────────────────────────────
+
 class CanvasTemplateAdmin(BaseModelView):
     column_list = ["id", "product_type_id", "color_id", "is_active"]
     fields = [
-        IntegerField("product_type_id",   label="ID типа изделия"),
-        IntegerField("color_id",          label="ID цвета"),
-        StringField("canvas_image_url",   label="URL изображения"),
-        BooleanField("is_active",         label="Активен"),
+        IntegerField("product_type_id",  label="ID типа изделия"),
+        IntegerField("color_id",         label="ID цвета"),
+        StringField("canvas_image_url",  label="URL изображения"),
+        BooleanField("is_active",        label="Активен"),
     ]
 
 
@@ -239,16 +297,16 @@ class ConstructorOrderAdmin(BaseModelView):
     column_list = ["id", "user_id", "canvas_template_id", "status", "final_price", "created_at"]
     column_sortable_list = ["created_at", "status"]
     fields = [
-        IntegerField("user_id",             label="ID пользователя"),
-        IntegerField("canvas_template_id",  label="ID шаблона"),
-        FloatField("final_price",           label="Цена"),
-        EnumField("status",                 enum=ConstructorOrderStatus, label="Статус"),
-        StringField("admin_comment",        label="Комментарий"),
-        StringField("delivery_name",        label="Имя получателя"),
-        StringField("delivery_phone",       label="Телефон"),
-        StringField("delivery_city",        label="Город"),
-        StringField("delivery_address",     label="Адрес"),
-        DateTimeField("created_at",         label="Создан", read_only=True),
+        IntegerField("user_id",            label="ID пользователя"),
+        IntegerField("canvas_template_id", label="ID шаблона"),
+        FloatField("final_price",          label="Цена"),
+        EnumField("status",                enum=ConstructorOrderStatus, label="Статус"),
+        StringField("admin_comment",       label="Комментарий"),
+        StringField("delivery_name",       label="Имя получателя"),
+        StringField("delivery_phone",      label="Телефон"),
+        StringField("delivery_city",       label="Город"),
+        StringField("delivery_address",    label="Адрес"),
+        DateTimeField("created_at",        label="Создан", read_only=True),
     ]
     def can_create(self, request: Request) -> bool:
         return False
