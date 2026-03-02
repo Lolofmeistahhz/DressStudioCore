@@ -29,6 +29,8 @@ import asyncio
 import logging
 from datetime import datetime
 from decimal import Decimal
+
+import anyio
 from sqlalchemy import (
     String, Text, Numeric, Boolean, Integer,
     DateTime, ForeignKey, JSON, Enum as SAEnum, func, event,
@@ -165,79 +167,73 @@ class CustomOrder(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SQLAlchemy event triggers
+# Запуск async-уведомлений из синхронного SQLAlchemy event
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _fire(coro):
-    """Запускаем корутину уведомления в фоне, не блокируя текущий поток."""
+def _fire(func, *args, **kwargs):
+    """Самый надёжный способ в FastAPI + AnyIO"""
     try:
-        import anyio
-        anyio.from_thread.run(coro)
+        anyio.from_thread.start_soon(func, *args, **kwargs)
     except Exception as e:
-        logger.error(f"Notification fire error: {e}")
+        logger.error(f"Notification fire error: {e}", exc_info=True)
 
 
 # ── ReadyOrder triggers ───────────────────────────────────────────────────────
 
 @event.listens_for(ReadyOrder, "after_insert")
 def _ready_order_created(mapper, connection, target):
-    # Preload user
-    _ = target.user
-    _fire(notify_masters_ready_order_new(target))
+    _ = target.user                     # preload
+    _fire(notify_masters_ready_order_new, target)
 
 
 @event.listens_for(ReadyOrder, "after_update")
 def _ready_order_updated(mapper, connection, target):
-    # Preload user for all cases
     _ = target.user
 
     from sqlalchemy.orm import attributes
-    status_hist    = attributes.get_history(target, "status")
-    tracking_hist  = attributes.get_history(target, "tracking_number")
+    status_hist   = attributes.get_history(target, "status")
+    tracking_hist = attributes.get_history(target, "tracking_number")
 
-    old_status = status_hist.deleted[0] if status_hist.has_changes() and status_hist.deleted else None
+    old_status = status_hist.deleted[0] if status_hist.has_changes() else None
     new_status = target.status
 
-    # Статус изменился
+    # изменение статуса
     if old_status and old_status != new_status:
         if new_status == ReadyOrderStatus.paid:
-            _fire(notify_masters_ready_order_paid(target))
-            _fire(notify_client_ready_order_paid(target))
+            _fire(notify_masters_ready_order_paid, target)
+            _fire(notify_client_ready_order_paid, target)
 
         elif new_status == ReadyOrderStatus.assembling:
-            _fire(notify_client_ready_order_assembling(target))
+            _fire(notify_client_ready_order_assembling, target)
 
         elif new_status == ReadyOrderStatus.shipped:
-            _fire(notify_client_ready_order_shipped(target))
+            _fire(notify_client_ready_order_shipped, target)
 
         elif new_status == ReadyOrderStatus.done:
-            _fire(notify_client_ready_order_done(target))
+            _fire(notify_client_ready_order_done, target)
 
         elif new_status == ReadyOrderStatus.cancelled:
-            _fire(notify_masters_ready_order_cancelled(target))
-            _fire(notify_client_ready_order_cancelled(target))
+            _fire(notify_masters_ready_order_cancelled, target)
+            _fire(notify_client_ready_order_cancelled, target)
 
-    # Трек-номер появился (был None/пустой, стал заполнен)
-    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() and tracking_hist.deleted else None
+    # появился трек-номер
+    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() else None
     new_tracking = target.tracking_number
     if new_tracking and not old_tracking:
-        _fire(notify_client_ready_order_tracking(target))
+        _fire(notify_client_ready_order_tracking, target)
 
 
 # ── CustomOrder triggers ──────────────────────────────────────────────────────
 
 @event.listens_for(CustomOrder, "after_insert")
 def _custom_order_created(mapper, connection, target):
-    # Preload user and product_type
     _ = target.user
     _ = target.product_type
-    _fire(notify_masters_custom_order_new(target))
-    _fire(notify_client_custom_order_new(target))
+    _fire(notify_masters_custom_order_new, target)
+    _fire(notify_client_custom_order_new, target)
 
 
 @event.listens_for(CustomOrder, "after_update")
 def _custom_order_updated(mapper, connection, target):
-    # Preload user and product_type for all cases
     _ = target.user
     _ = target.product_type
 
@@ -245,35 +241,29 @@ def _custom_order_updated(mapper, connection, target):
     status_hist   = attributes.get_history(target, "status")
     tracking_hist = attributes.get_history(target, "tracking_number")
 
-    old_status = status_hist.deleted[0] if status_hist.has_changes() and status_hist.deleted else None
+    old_status = status_hist.deleted[0] if status_hist.has_changes() else None
     new_status = target.status
 
     if old_status and old_status != new_status:
         if new_status == CustomOrderStatus.reviewing:
-            _fire(notify_client_custom_order_reviewing(target))
-
-        elif new_status == CustomOrderStatus.accepted:
-            # Платёжку шлём отдельно из API после создания payment_url
-            # Здесь только логируем — notify_client_custom_order_accepted
-            # вызывается из app/api/payments.py с готовым URL
-            pass
+            _fire(notify_client_custom_order_reviewing, target)
 
         elif new_status == CustomOrderStatus.paid:
-            _fire(notify_masters_custom_order_paid(target))
-            _fire(notify_client_custom_order_paid(target))
+            _fire(notify_masters_custom_order_paid, target)
+            _fire(notify_client_custom_order_paid, target)
 
         elif new_status == CustomOrderStatus.in_work:
-            _fire(notify_client_custom_order_in_work(target))
+            _fire(notify_client_custom_order_in_work, target)
 
         elif new_status == CustomOrderStatus.done:
-            _fire(notify_client_custom_order_done(target))
+            _fire(notify_client_custom_order_done, target)
 
         elif new_status == CustomOrderStatus.cancelled:
-            _fire(notify_masters_custom_order_cancelled(target))
-            _fire(notify_client_custom_order_cancelled(target))
+            _fire(notify_masters_custom_order_cancelled, target)
+            _fire(notify_client_custom_order_cancelled, target)
 
-    # Трек-номер появился
-    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() and tracking_hist.deleted else None
+    # появился трек-номер
+    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() else None
     new_tracking = target.tracking_number
     if new_tracking and not old_tracking:
-        _fire(notify_client_custom_order_tracking(target))
+        _fire(notify_client_custom_order_tracking, target)
