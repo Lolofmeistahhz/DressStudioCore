@@ -39,13 +39,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.core.database import Base
-from app.utils.notifications import notify_masters_custom_order_new, notify_client_custom_order_new, \
+from app.utils.orders_notifications_cases import notify_masters_custom_order_new, notify_client_custom_order_new, \
     notify_client_ready_order_tracking, notify_client_ready_order_cancelled, notify_masters_ready_order_cancelled, \
     notify_client_ready_order_paid, notify_masters_ready_order_paid, notify_client_ready_order_assembling, \
     notify_client_ready_order_shipped, notify_client_ready_order_done, notify_masters_ready_order_new, \
     notify_client_custom_order_reviewing, notify_masters_custom_order_paid, notify_client_custom_order_paid, \
     notify_client_custom_order_in_work, notify_client_custom_order_done, notify_masters_custom_order_cancelled, \
-    notify_client_custom_order_cancelled, notify_client_custom_order_tracking
+    notify_client_custom_order_cancelled, notify_client_custom_order_tracking, notify_client_custom_order_accepted
 
 logger = logging.getLogger(__name__)
 
@@ -166,22 +166,52 @@ class CustomOrder(Base):
     print_size:   Mapped["PrintSize | None"] = relationship()
 
 
+
+# ── Статусы (без изменений) ───────────────────────────────────────────────────
+class ReadyOrderStatus(str, enum.Enum):
+    pending_payment = "pending_payment"
+    paid = "paid"
+    assembling = "assembling"
+    shipped = "shipped"
+    done = "done"
+    cancelled = "cancelled"
+
+
+class CustomOrderStatus(str, enum.Enum):
+    new = "new"
+    reviewing = "reviewing"
+    accepted = "accepted"
+    paid = "paid"
+    in_work = "in_work"
+    done = "done"
+    cancelled = "cancelled"
+
+
+class DeliveryCarrier(str, enum.Enum):
+    cdek = "cdek"
+    yandex = "yandex"
+
+
+# ── Модели (без изменений) ────────────────────────────────────────────────────
+# ... (CartItem, ReadyOrder, ReadyOrderItem, CustomOrder) — оставь как у тебя
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Запуск async-уведомлений из синхронного SQLAlchemy event
+# FIRE — теперь правильно запускает async-функцию из любого потока
 # ─────────────────────────────────────────────────────────────────────────────
-def _fire(func, *args, **kwargs):
-    """Самый надёжный способ в FastAPI + AnyIO"""
+def _fire(async_notify_func, order):
+    """Запускаем async уведомление из синхронного SQLAlchemy event."""
     try:
-        anyio.from_thread.start_soon(func, *args, **kwargs)
+        import anyio
+        anyio.from_thread.run(async_notify_func, order)
     except Exception as e:
-        logger.error(f"Notification fire error: {e}", exc_info=True)
+        logger.error(f"Notification fire error: {e}")
 
 
 # ── ReadyOrder triggers ───────────────────────────────────────────────────────
-
 @event.listens_for(ReadyOrder, "after_insert")
 def _ready_order_created(mapper, connection, target):
-    _ = target.user                     # preload
+    _ = target.user
     _fire(notify_masters_ready_order_new, target)
 
 
@@ -190,40 +220,33 @@ def _ready_order_updated(mapper, connection, target):
     _ = target.user
 
     from sqlalchemy.orm import attributes
-    status_hist   = attributes.get_history(target, "status")
+    status_hist = attributes.get_history(target, "status")
     tracking_hist = attributes.get_history(target, "tracking_number")
 
-    old_status = status_hist.deleted[0] if status_hist.has_changes() else None
+    old_status = status_hist.deleted[0] if status_hist.has_changes() and status_hist.deleted else None
     new_status = target.status
 
-    # изменение статуса
     if old_status and old_status != new_status:
         if new_status == ReadyOrderStatus.paid:
             _fire(notify_masters_ready_order_paid, target)
             _fire(notify_client_ready_order_paid, target)
-
         elif new_status == ReadyOrderStatus.assembling:
             _fire(notify_client_ready_order_assembling, target)
-
         elif new_status == ReadyOrderStatus.shipped:
             _fire(notify_client_ready_order_shipped, target)
-
         elif new_status == ReadyOrderStatus.done:
             _fire(notify_client_ready_order_done, target)
-
         elif new_status == ReadyOrderStatus.cancelled:
             _fire(notify_masters_ready_order_cancelled, target)
             _fire(notify_client_ready_order_cancelled, target)
 
-    # появился трек-номер
-    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() else None
-    new_tracking = target.tracking_number
-    if new_tracking and not old_tracking:
+    # Трек-номер появился
+    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() and tracking_hist.deleted else None
+    if target.tracking_number and not old_tracking:
         _fire(notify_client_ready_order_tracking, target)
 
 
 # ── CustomOrder triggers ──────────────────────────────────────────────────────
-
 @event.listens_for(CustomOrder, "after_insert")
 def _custom_order_created(mapper, connection, target):
     _ = target.user
@@ -233,37 +256,33 @@ def _custom_order_created(mapper, connection, target):
 
 
 @event.listens_for(CustomOrder, "after_update")
-def _custom_order_updated(mapper, connection, target):
-    _ = target.user
+def receive_custom_order_updated(mapper, connection, target):
+    user = target.user
     _ = target.product_type
-
     from sqlalchemy.orm import attributes
-    status_hist   = attributes.get_history(target, "status")
+    status_hist = attributes.get_history(target, "status")
     tracking_hist = attributes.get_history(target, "tracking_number")
 
-    old_status = status_hist.deleted[0] if status_hist.has_changes() else None
+    old_status = status_hist.deleted[0] if status_hist.has_changes() and status_hist.deleted else None
     new_status = target.status
 
     if old_status and old_status != new_status:
         if new_status == CustomOrderStatus.reviewing:
             _fire(notify_client_custom_order_reviewing, target)
-
+        elif new_status == CustomOrderStatus.accepted:
+            _fire(notify_client_custom_order_accepted, target)
         elif new_status == CustomOrderStatus.paid:
             _fire(notify_masters_custom_order_paid, target)
             _fire(notify_client_custom_order_paid, target)
-
         elif new_status == CustomOrderStatus.in_work:
             _fire(notify_client_custom_order_in_work, target)
-
         elif new_status == CustomOrderStatus.done:
             _fire(notify_client_custom_order_done, target)
-
         elif new_status == CustomOrderStatus.cancelled:
             _fire(notify_masters_custom_order_cancelled, target)
             _fire(notify_client_custom_order_cancelled, target)
 
-    # появился трек-номер
-    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() else None
-    new_tracking = target.tracking_number
-    if new_tracking and not old_tracking:
+    # Трек-номер появился
+    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() and tracking_hist.deleted else None
+    if target.tracking_number and not old_tracking:
         _fire(notify_client_custom_order_tracking, target)

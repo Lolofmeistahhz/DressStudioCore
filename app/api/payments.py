@@ -6,76 +6,32 @@ import httpx
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.order import ReadyOrder, ReadyOrderStatus, CustomOrder, CustomOrderStatus
 from app.models.payment import Payment, PaymentEntityType, PaymentStatus
-from app.models.user import User
+from app.models.order import ReadyOrder, ReadyOrderStatus, CustomOrder, CustomOrderStatus
 from app.schemas.payment import PaymentCreate, PaymentInitResponse, PaymentOut
+from app.utils.shared import create_payment_for_order
+from app.utils.orders import get_ready_order_by_id, get_custom_order_by_id, get_user_by_id
+from app.utils.notifications import send_telegram_message
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/payments", tags=["Оплата"])
 
 
-def _yookassa():
-    try:
-        from yookassa import Configuration, Payment as YKPayment
-        Configuration.account_id = settings.YOOKASSA_SHOP_ID
-        Configuration.secret_key = settings.YOOKASSA_SECRET_KEY
-        return YKPayment
-    except ImportError:
-        raise HTTPException(status_code=503, detail="pip install yookassa")
-
-
 async def _notify_telegram(telegram_id: int, text: str) -> None:
-    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(url, json={"chat_id": telegram_id, "text": text, "parse_mode": "HTML"})
-    except Exception as e:
-        logger.warning(f"Telegram notify error: {e}")
+    """Отправка уведомления в Telegram."""
+    await send_telegram_message(telegram_id, text)
 
 
 # ── 1. Создание платежа ───────────────────────────────────────────────────────
 
 @router.post("/create", response_model=PaymentInitResponse, summary="Создать платёж")
 async def create_payment(data: PaymentCreate, db: AsyncSession = Depends(get_db)):
-    YKPayment = _yookassa()
-
-    descriptions = {
-        PaymentEntityType.ready_order:       f"Заказ готового мерча №{data.entity_id}",
-        PaymentEntityType.custom_order:      f"Кастомный заказ №{data.entity_id}",
-        PaymentEntityType.constructor_order: f"Заказ из конструктора №{data.entity_id}",
-    }
-
-    webhook_base = settings.WEBHOOK_URL.rstrip("/")
-    yk_payment = YKPayment.create({
-        "amount": {"value": f"{data.amount:.2f}", "currency": "RUB"},
-        "confirmation": {
-            "type": "redirect",
-            "return_url": f"{webhook_base}/api/v1/payments/success",
-        },
-        "capture": True,
-        "description": descriptions[data.entity_type],
-        "metadata": {
-            "entity_type": data.entity_type.value,
-            "entity_id": str(data.entity_id),
-        },
-    })
-
-    payment = Payment(
+    """Создает платеж через ЮKassa."""
+    return await create_payment_for_order(
         entity_type=data.entity_type,
         entity_id=data.entity_id,
         amount=data.amount,
-        yookassa_payment_id=yk_payment.id,
-    )
-    db.add(payment)
-    await db.commit()
-    await db.refresh(payment)
-
-    return PaymentInitResponse(
-        payment_id=payment.id,
-        yookassa_payment_id=yk_payment.id,
-        confirmation_url=yk_payment.confirmation.confirmation_url,
-        amount=data.amount,
+        db=db
     )
 
 
@@ -83,6 +39,7 @@ async def create_payment(data: PaymentCreate, db: AsyncSession = Depends(get_db)
 
 @router.post("/webhook", summary="Вебхук ЮKassa")
 async def yookassa_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Обработка вебхука от ЮKassa."""
     event = await request.json()
     event_type = event.get("event")
     yk_payment_id = event.get("object", {}).get("id")
@@ -105,6 +62,7 @@ async def yookassa_webhook(request: Request, db: AsyncSession = Depends(get_db))
 
 
 async def _handle_succeeded(payment: Payment, db) -> None:
+    """Обработка успешного платежа."""
     payment.status = PaymentStatus.succeeded
     await db.flush()
 
@@ -112,12 +70,10 @@ async def _handle_succeeded(payment: Payment, db) -> None:
     message = ""
 
     if payment.entity_type == PaymentEntityType.ready_order:
-        result = await db.execute(select(ReadyOrder).where(ReadyOrder.id == payment.entity_id))
-        order = result.scalar_one_or_none()
+        order = await get_ready_order_by_id(db, payment.entity_id)
         if order:
             order.status = ReadyOrderStatus.paid
-            user_r = await db.execute(select(User).where(User.id == order.user_id))
-            user = user_r.scalar_one_or_none()
+            user = await get_user_by_id(db, order.user_id)
             if user:
                 telegram_id = user.telegram_id
                 message = (
@@ -127,12 +83,10 @@ async def _handle_succeeded(payment: Payment, db) -> None:
                 )
 
     elif payment.entity_type == PaymentEntityType.custom_order:
-        result = await db.execute(select(CustomOrder).where(CustomOrder.id == payment.entity_id))
-        order = result.scalar_one_or_none()
+        order = await get_custom_order_by_id(db, payment.entity_id)
         if order:
             order.status = CustomOrderStatus.paid
-            user_r = await db.execute(select(User).where(User.id == order.user_id))
-            user = user_r.scalar_one_or_none()
+            user = await get_user_by_id(db, order.user_id)
             if user:
                 telegram_id = user.telegram_id
                 message = (
