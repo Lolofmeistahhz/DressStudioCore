@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin"
 
+    ALERT_CHAT_ID: str = os.getenv("ALERT_CHAT_ID")
+
     BASE_URL: str = os.getenv("BASE_URL")
 
     ADMIN_BASE_URL: str = f"{BASE_URL}/admin"
