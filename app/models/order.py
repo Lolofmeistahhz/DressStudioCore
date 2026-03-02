@@ -171,11 +171,8 @@ class CustomOrder(Base):
 def _fire(coro):
     """Запускаем корутину уведомления в фоне, не блокируя текущий поток."""
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(coro)
-        else:
-            loop.run_until_complete(coro)
+        import anyio
+        anyio.from_thread.run(coro)
     except Exception as e:
         logger.error(f"Notification fire error: {e}")
 

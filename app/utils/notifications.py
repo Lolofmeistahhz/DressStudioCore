@@ -1,13 +1,3 @@
-"""
-app/services/notifications.py
-
-Отправка уведомлений через Telegram Bot API (httpx, без aiogram).
-Используется из триггеров моделей через asyncio.
-
-Два канала:
-  - ALERT_CHAT_ID  — групповой чат мастеров
-  - telegram_id    — личный чат клиента
-"""
 import logging
 import httpx
 from app.core.config import settings
@@ -39,9 +29,9 @@ async def _send(chat_id: int | str, text: str, reply_markup: dict | None = None)
         return False
 
 
-def _admin_link(section: str, obj_id: int) -> str:
+def _admin_link(section: str, obj_id: int, action: str = "detail") -> str:
     """Ссылка на запись в starlette-admin."""
-    return f"{_ADMIN_URL}/{section}/detail/{obj_id}"
+    return f"{_ADMIN_URL}/{section}/{action}/{obj_id}"
 
 
 def _inline_kb(text: str, url: str) -> dict:
@@ -80,7 +70,7 @@ async def notify_masters_ready_order_paid(order) -> None:
     )
     await _send(
         settings.ALERT_CHAT_ID, text,
-        _inline_kb("✏️ Добавить трек-номер", _admin_link("readyorder", order.id)),
+        _inline_kb("✏️ Добавить трек-номер", _admin_link("readyorder", order.id, "edit")),
     )
 
 
@@ -124,7 +114,7 @@ async def notify_masters_custom_order_paid(order) -> None:
     )
     await _send(
         settings.ALERT_CHAT_ID, text,
-        _inline_kb("✏️ Добавить трек-номер", _admin_link("customorder", order.id)),
+        _inline_kb("✏️ Добавить трек-номер", _admin_link("customorder", order.id, "edit")),
     )
 
 
