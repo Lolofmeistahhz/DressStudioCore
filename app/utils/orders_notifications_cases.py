@@ -13,6 +13,8 @@ from app.utils.notifications import (
 logger = logging.getLogger(__name__)
 
 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Уведомления мастерам
 # ─────────────────────────────────────────────────────────────────────────────
@@ -28,7 +30,7 @@ async def notify_masters_ready_order_new(order) -> None:
         f"Доставка: {order.delivery_city}, {order.delivery_address}"
     )
     await send_telegram_message(
-        settings.ALERT_CHAT_ID,
+        settings.ALERTCHAT_ID,
         text,
         inline_keyboard("📋 Открыть в админке", admin_link("ready-order", order.id))
     )

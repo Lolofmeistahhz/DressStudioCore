@@ -202,7 +202,6 @@ class DeliveryCarrier(str, enum.Enum):
 def _fire(async_notify_func, order):
     """Запускаем async уведомление из синхронного SQLAlchemy event."""
     try:
-        import anyio
         anyio.from_thread.run(async_notify_func, order)
     except Exception as e:
         logger.error(f"Notification fire error: {e}")
