@@ -184,20 +184,21 @@ def _fire(coro):
 
 @event.listens_for(ReadyOrder, "after_insert")
 def _ready_order_created(mapper, connection, target):
+    # Preload user
+    _ = target.user
     _fire(notify_masters_ready_order_new(target))
 
 
 @event.listens_for(ReadyOrder, "after_update")
 def _ready_order_updated(mapper, connection, target):
+    # Preload user for all cases
+    _ = target.user
 
-    history = target.__class__.__mapper__.attrs
-
-    # Проверяем изменения статуса
     from sqlalchemy.orm import attributes
     status_hist    = attributes.get_history(target, "status")
     tracking_hist  = attributes.get_history(target, "tracking_number")
 
-    old_status = status_hist.deleted[0] if status_hist.deleted else None
+    old_status = status_hist.deleted[0] if status_hist.has_changes() and status_hist.deleted else None
     new_status = target.status
 
     # Статус изменился
@@ -220,7 +221,7 @@ def _ready_order_updated(mapper, connection, target):
             _fire(notify_client_ready_order_cancelled(target))
 
     # Трек-номер появился (был None/пустой, стал заполнен)
-    old_tracking = tracking_hist.deleted[0] if tracking_hist.deleted else None
+    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() and tracking_hist.deleted else None
     new_tracking = target.tracking_number
     if new_tracking and not old_tracking:
         _fire(notify_client_ready_order_tracking(target))
@@ -230,18 +231,24 @@ def _ready_order_updated(mapper, connection, target):
 
 @event.listens_for(CustomOrder, "after_insert")
 def _custom_order_created(mapper, connection, target):
+    # Preload user and product_type
+    _ = target.user
+    _ = target.product_type
     _fire(notify_masters_custom_order_new(target))
     _fire(notify_client_custom_order_new(target))
 
 
 @event.listens_for(CustomOrder, "after_update")
 def _custom_order_updated(mapper, connection, target):
+    # Preload user and product_type for all cases
+    _ = target.user
+    _ = target.product_type
 
     from sqlalchemy.orm import attributes
     status_hist   = attributes.get_history(target, "status")
     tracking_hist = attributes.get_history(target, "tracking_number")
 
-    old_status = status_hist.deleted[0] if status_hist.deleted else None
+    old_status = status_hist.deleted[0] if status_hist.has_changes() and status_hist.deleted else None
     new_status = target.status
 
     if old_status and old_status != new_status:
@@ -269,7 +276,7 @@ def _custom_order_updated(mapper, connection, target):
             _fire(notify_client_custom_order_cancelled(target))
 
     # Трек-номер появился
-    old_tracking = tracking_hist.deleted[0] if tracking_hist.deleted else None
+    old_tracking = tracking_hist.deleted[0] if tracking_hist.has_changes() and tracking_hist.deleted else None
     new_tracking = target.tracking_number
     if new_tracking and not old_tracking:
         _fire(notify_client_custom_order_tracking(target))
