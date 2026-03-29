@@ -191,18 +191,24 @@ class DeliveryCarrier(str, enum.Enum):
     cdek = "cdek"
     yandex = "yandex"
 
-
-# ── Модели (без изменений) ────────────────────────────────────────────────────
-# ... (CartItem, ReadyOrder, ReadyOrderItem, CustomOrder) — оставь как у тебя
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FIRE — теперь правильно запускает async-функцию из любого потока
-# ─────────────────────────────────────────────────────────────────────────────
 def _fire(async_notify_func, order):
     """Запускаем async уведомление из синхронного SQLAlchemy event."""
     try:
-        anyio.from_thread.run(async_notify_func, order)
+        # Пытаемся получить существующий event loop
+        loop = asyncio.get_running_loop()
+        # Если мы уже в асинхронном контексте
+        if loop.is_running():
+            # Создаем задачу в существующем loop
+            asyncio.create_task(async_notify_func(order))
+        else:
+            # Если loop не запущен, запускаем синхронно
+            asyncio.run(async_notify_func(order))
+    except RuntimeError:
+        # Нет запущенного event loop, создаем новый
+        try:
+            asyncio.run(async_notify_func(order))
+        except Exception as e:
+            logger.error(f"Notification fire error: {e}")
     except Exception as e:
         logger.error(f"Notification fire error: {e}")
 
